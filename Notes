@@ -1,0 +1,474 @@
+!pip install langchain langchain-community langchain-openai requests
+
+# Install required packages
+!pip install langchain langchain-community langchain-openai requests
+
+import json
+import re
+from typing import Dict, Any, List
+from datetime import datetime
+
+# Import required LangChain components
+from langchain.agents import Tool, initialize_agent, AgentType
+from langchain.memory import ConversationBufferMemory
+from langchain_openai import ChatOpenAI
+from langchain.schema import HumanMessage, AIMessage
+
+class TogetherAIAgenticAnalyzer:
+    def __init__(self, api_key: str):
+        """
+        Initialize with Together.ai API key
+        Get free API key from: https://api.together.xyz/settings/api-keys
+        """
+        self.api_key = api_key
+        
+        # Initialize Together.ai LLM with a free-tier model
+        self.llm = ChatOpenAI(
+            base_url="https://api.together.xyz/v1",
+            api_key=self.api_key,
+            model="mistralai/Mistral-7B-Instruct-v0.2",  # Free model
+            temperature=0,  # For deterministic output
+            max_tokens=1024,
+            streaming=False
+        )
+        
+        # Initialize tools
+        self.tools = self._initialize_tools()
+        
+        # Initialize memory
+        self.memory = ConversationBufferMemory(
+            memory_key="chat_history",
+            return_messages=True
+        )
+        
+        # Initialize agent with robust error handling
+        try:
+            self.agent = initialize_agent(
+                tools=self.tools,
+                llm=self.llm,
+                agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+                verbose=True,
+                memory=self.memory,
+                handle_parsing_errors=True,
+                max_iterations=15,
+                early_stopping_method="generate"
+            )
+        except Exception as e:
+            print(f"Warning: Could not initialize full agent, using fallback: {e}")
+            self.agent = None
+    
+    def _initialize_tools(self) -> List[Tool]:
+        """Initialize all available tools for the agent"""
+        return [
+            Tool(
+                name="fetch_customer_data",
+                func=self._fetch_customer_data_tool,
+                description="Fetch customer transaction data from database. Input: mtcn (string)"
+            ),
+            Tool(
+                name="analyze_risk_factors",
+                func=self._analyze_risk_tool,
+                description="Analyze transaction for risk factors. Input: JSON string with amount, sender_country, receiver_country"
+            ),
+            Tool(
+                name="verify_identities",
+                func=self._verify_identity_tool,
+                description="Verify sender and receiver identities. Input: comma-separated sender_id,receiver_id"
+            ),
+            Tool(
+                name="check_purpose_and_sof",
+                func=self._check_purpose_sof_tool,
+                description="Determine transaction purpose and source of funds. Input: JSON string with transaction details"
+            ),
+            Tool(
+                name="generate_final_assessment",
+                func=self._generate_assessment_tool,
+                description="Generate final risk assessment and recommendation. Input: JSON string with all analysis data"
+            )
+        ]
+    
+    # Tool implementations
+    def _fetch_customer_data_tool(self, mtcn: str) -> str:
+        """Tool to fetch customer data"""
+        try:
+            # Mock data - replace with real service calls
+            data = {
+                "mtcn": mtcn,
+                "sender_id": f"SENDER_{mtcn[-6:]}",
+                "receiver_id": f"RECEIVER_{mtcn[-6:]}",
+                "amount": float(hash(mtcn) % 100000) / 100,  # Random amount up to $1000
+                "currency": "USD",
+                "sender_country": "US",
+                "receiver_country": "MX" if hash(mtcn) % 3 == 0 else "CA" if hash(mtcn) % 3 == 1 else "UK",
+                "transaction_date": datetime.now().strftime("%Y-%m-%d"),
+                "sender_name": f"Sender {mtcn[-3:]}",
+                "receiver_name": f"Receiver {mtcn[-3:]}"
+            }
+            
+            print(f"🔧 Tool: fetch_customer_data - Fetched data for {mtcn}")
+            return json.dumps(data, indent=2)
+        except Exception as e:
+            error_msg = f"Error in fetch_customer_data: {str(e)}"
+            print(f"❌ {error_msg}")
+            return json.dumps({"error": error_msg})
+    
+    def _analyze_risk_tool(self, params_str: str) -> str:
+        """Tool to analyze risk factors"""
+        try:
+            # Parse input parameters
+            if isinstance(params_str, str):
+                # Handle different input formats
+                if '{' in params_str and '}' in params_str:
+                    # JSON format
+                    json_match = re.search(r'\{.*\}', params_str)
+                    if json_match:
+                        params = json.loads(json_match.group())
+                    else:
+                        params = json.loads(params_str)
+                else:
+                    # Simple format: amount,sender_country,receiver_country
+                    parts = [p.strip() for p in params_str.split(',')]
+                    params = {
+                        "amount": float(parts[0]) if len(parts) > 0 and parts[0] else 0,
+                        "sender_country": parts[1] if len(parts) > 1 else "US",
+                        "receiver_country": parts[2] if len(parts) > 2 else "MX"
+                    }
+            else:
+                params = params_str
+            
+            # Extract parameters
+            amount = float(params.get("amount", 0))
+            sender_country = params.get("sender_country", "US")
+            receiver_country = params.get("receiver_country", "MX")
+            
+            # Risk analysis logic
+            risk_score = 0
+            risk_factors = []
+            
+            # Amount-based risk
+            if amount > 10000:
+                risk_score += 0.5
+                risk_factors.append("Very high amount transaction")
+            elif amount > 5000:
+                risk_score += 0.3
+                risk_factors.append("High amount transaction")
+            elif amount > 1000:
+                risk_score += 0.1
+                risk_factors.append("Medium amount transaction")
+            
+            # Cross-border risk
+            if sender_country != receiver_country:
+                risk_score += 0.2
+                risk_factors.append("Cross-border transaction")
+            
+            # High-risk country combinations
+            high_risk_routes = [("US", "RU"), ("US", "NG"), ("US", "KP")]
+            if (sender_country, receiver_country) in high_risk_routes:
+                risk_score += 0.3
+                risk_factors.append("High-risk country combination")
+            
+            # Determine risk level
+            if risk_score >= 0.7:
+                risk_level = "HIGH"
+            elif risk_score >= 0.4:
+                risk_level = "MEDIUM"
+            else:
+                risk_level = "LOW"
+            
+            result = {
+                "risk_score": round(min(risk_score, 1.0), 2),
+                "risk_level": risk_level,
+                "risk_factors": risk_factors,
+                "amount": amount,
+                "sender_country": sender_country,
+                "receiver_country": receiver_country
+            }
+            
+            print(f"🔧 Tool: analyze_risk_factors - Risk level: {risk_level} ({risk_score:.2f})")
+            return json.dumps(result, indent=2)
+            
+        except Exception as e:
+            error_msg = f"Error in analyze_risk_factors: {str(e)}"
+            print(f"❌ {error_msg}")
+            return json.dumps({"error": error_msg})
+    
+    def _verify_identity_tool(self, ids_str: str) -> str:
+        """Tool to verify identities"""
+        try:
+            # Parse input
+            ids = [id.strip() for id in ids_str.split(',')]
+            sender_id = ids[0] if len(ids) > 0 else ""
+            receiver_id = ids[1] if len(ids) > 1 else ""
+            
+            # Mock verification results
+            result = {
+                "sender_verified": True,
+                "receiver_verified": True,
+                "sender_verification_method": "Database match",
+                "receiver_verification_method": "Database match",
+                "sender_confidence": 0.95,
+                "receiver_confidence": 0.92,
+                "sender_id": sender_id,
+                "receiver_id": receiver_id
+            }
+            
+            print(f"🔧 Tool: verify_identities - Verified sender: {sender_id[:10]}..., receiver: {receiver_id[:10]}...")
+            return json.dumps(result, indent=2)
+            
+        except Exception as e:
+            error_msg = f"Error in verify_identities: {str(e)}"
+            print(f"❌ {error_msg}")
+            return json.dumps({"error": error_msg})
+    
+    def _check_purpose_sof_tool(self, params_str: str) -> str:
+        """Tool to check purpose and source of funds"""
+        try:
+            # Parse input
+            if isinstance(params_str, str) and '{' in params_str:
+                json_match = re.search(r'\{.*\}', params_str)
+                if json_match:
+                    params = json.loads(json_match.group())
+                else:
+                    params = json.loads(params_str)
+            else:
+                params = json.loads(params_str) if isinstance(params_str, str) else params_str
+            
+            amount = params.get("amount", 0)
+            sender_country = params.get("sender_country", "US")
+            receiver_country = params.get("receiver_country", "MX")
+            
+            # Mock purpose and SOF determination
+            purposes = ["Family Support", "Business Payment", "Gift", "Loan Repayment", "Investment"]
+            sof_sources = ["Salary", "Business Income", "Investment Returns", "Sale of Assets", "Loan"]
+            
+            # Simple logic based on amount and countries
+            if amount > 5000:
+                purpose = "Business Payment" if sender_country != receiver_country else "Investment"
+                sof = "Business Income" if sender_country != receiver_country else "Investment Returns"
+            else:
+                purpose = "Family Support" if sender_country != receiver_country else "Gift"
+                sof = "Salary" if sender_country == receiver_country else "Business Income"
+            
+            result = {
+                "purpose_of_transaction": purpose,
+                "source_of_funds": sof,
+                "consistency_check": "PASS" if self._check_consistency(purpose, sof, amount) else "WARNING",
+                "analysis_notes": f"Determined based on amount ${amount} and route {sender_country}->{receiver_country}"
+            }
+            
+            print(f"🔧 Tool: check_purpose_and_sof - Purpose: {purpose}, SOF: {sof}")
+            return json.dumps(result, indent=2)
+            
+        except Exception as e:
+            error_msg = f"Error in check_purpose_and_sof: {str(e)}"
+            print(f"❌ {error_msg}")
+            return json.dumps({"error": error_msg})
+    
+    def _check_consistency(self, purpose: str, sof: str, amount: float) -> bool:
+        """Simple consistency check"""
+        # Basic consistency rules
+        if purpose == "Family Support" and sof == "Salary":
+            return True
+        elif purpose == "Business Payment" and sof in ["Business Income", "Investment Returns"]:
+            return True
+        elif amount < 1000:  # Small amounts are usually consistent
+            return True
+        else:
+            return False  # Default to manual review for complex cases
+    
+    def _generate_assessment_tool(self, all_data_str: str) -> str:
+        """Tool to generate final assessment"""
+        try:
+            # Parse input data
+            if isinstance(all_data_str, str):
+                json_match = re.search(r'\{.*\}', all_data_str)
+                if json_match:
+                    all_data = json.loads(json_match.group())
+                else:
+                    all_data = json.loads(all_data_str)
+            else:
+                all_data = all_data_str
+            
+            # Extract key information
+            risk_score = all_data.get("risk_score", 0.5)
+            risk_level = all_data.get("risk_level", "MEDIUM")
+            risk_factors = all_data.get("risk_factors", [])
+            purpose = all_data.get("purpose_of_transaction", "Unknown")
+            sof = all_data.get("source_of_funds", "Unknown")
+            amount = all_data.get("amount", 0)
+            
+            # Generate recommendation based on analysis
+            if risk_score > 0.7:
+                recommendation = "REJECT"
+                reason = "High risk factors identified"
+            elif risk_score > 0.4:
+                recommendation = "FLAG"
+                reason = "Medium risk requiring manual review"
+            else:
+                recommendation = "APPROVE"
+                reason = "Low risk transaction"
+            
+            # Create detailed assessment
+            assessment = {
+                "recommendation": recommendation,
+                "reason": reason,
+                "overall_risk_score": round(risk_score, 2),
+                "risk_level": risk_level,
+                "key_risk_factors": risk_factors,
+                "transaction_purpose": purpose,
+                "source_of_funds": sof,
+                "amount": amount,
+                "final_assessment": f"Based on analysis of risk factors, purpose ({purpose}), and source of funds ({sof}), "
+                                  f"this transaction is classified as {risk_level} risk and should be {recommendation}D."
+            }
+            
+            print(f"🔧 Tool: generate_final_assessment - Recommendation: {recommendation}")
+            return json.dumps(assessment, indent=2)
+            
+        except Exception as e:
+            error_msg = f"Error in generate_final_assessment: {str(e)}"
+            print(f"❌ {error_msg}")
+            return json.dumps({"error": error_msg})
+    
+    def analyze_transaction(self, mtcn: str) -> Dict[str, Any]:
+        """
+        Main method to analyze a transaction using agentic approach with Together.ai LLM
+        """
+        print(f"🤖 Starting agentic analysis of transaction: {mtcn}")
+        print("=" * 60)
+        
+        # Create initial prompt for the agent
+        initial_prompt = f"""
+        You are a transaction risk analysis expert. Analyze transaction {mtcn} for potential money laundering, fraud, or other risks.
+        
+        Your goal is to determine if this transaction should be APPROVED, FLAGGED for review, or REJECTED.
+        
+        Available tools:
+        1. fetch_customer_data - Get basic transaction details (Input: mtcn)
+        2. analyze_risk_factors - Check for risk indicators (Input: JSON with amount, countries)
+        3. verify_identities - Verify sender/receiver identities (Input: sender_id,receiver_id)
+        4. check_purpose_and_sof - Determine transaction purpose and source of funds
+        5. generate_final_assessment - Create final recommendation
+        
+        Strategy:
+        1. Start by fetching customer data
+        2. Analyze risk factors based on the data
+        3. Verify identities
+        4. Check purpose and source of funds
+        5. Generate final assessment
+        
+        Always use the tools in a logical sequence and provide clear reasoning.
+        Think step by step and use tools as needed to gather information.
+        
+        Begin your analysis now:
+        """
+        
+        try:
+            # Run the agent analysis
+            if self.agent:
+                result = self.agent.run(initial_prompt)
+            else:
+                # Fallback: manual agentic flow
+                result = self._manual_agentic_flow(mtcn)
+            
+            print("\n" + "=" * 60)
+            print("✅ Analysis completed successfully!")
+            
+            return {
+                "success": True,
+                "mtcn": mtcn,
+                "analysis_result": result,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            error_msg = f"Error during transaction analysis: {str(e)}"
+            print(f"\n❌ {error_msg}")
+            
+            return {
+                "success": False,
+                "mtcn": mtcn,
+                "error": error_msg,
+                "timestamp": datetime.now().isoformat()
+            }
+    
+    def _manual_agentic_flow(self, mtcn: str) -> str:
+        """
+        Fallback method when agent initialization fails
+        """
+        print("⚠️  Using manual agentic flow due to agent initialization issues")
+        
+        # Step 1: Fetch customer data
+        customer_data_json = self._fetch_customer_data_tool(mtcn)
+        customer_data = json.loads(customer_data_json)
+        
+        # Step 2: Analyze risk factors
+        risk_params = {
+            "amount": customer_data["amount"],
+            "sender_country": customer_data["sender_country"],
+            "receiver_country": customer_data["receiver_country"]
+        }
+        risk_analysis_json = self._analyze_risk_tool(json.dumps(risk_params))
+        risk_analysis = json.loads(risk_analysis_json)
+        
+        # Step 3: Verify identities
+        identity_input = f"{customer_data['sender_id']},{customer_data['receiver_id']}"
+        identity_result_json = self._verify_identity_tool(identity_input)
+        
+        # Step 4: Check purpose and SOF
+        purpose_sof_result_json = self._check_purpose_sof_tool(json.dumps(customer_data))
+        purpose_sof_data = json.loads(purpose_sof_result_json)
+        
+        # Step 5: Generate final assessment
+        all_data = {**customer_data, **risk_analysis, **purpose_sof_data}
+        final_assessment_json = self._generate_assessment_tool(json.dumps(all_data))
+        
+        return f"Manual analysis complete. Final assessment: {json.loads(final_assessment_json).get('final_assessment', 'No assessment generated')}"
+    
+    def test_connection(self) -> bool:
+        """Test connection to Together.ai API"""
+        try:
+            test_message = HumanMessage(content="Hello, this is a test message. Respond with 'Connection successful'")
+            response = self.llm([test_message])
+            print(f"✅ Together.ai connection test: {response.content}")
+            return True
+        except Exception as e:
+            print(f"❌ Together.ai connection failed: {e}")
+            return False
+
+# Usage example
+def main():
+    print("🚀 Together.ai Agentic Transaction Analysis System")
+    print("=" * 60)
+    
+    # You need to get a free API key from https://api.together.xyz/settings/api-keys
+    API_KEY = "YOUR_TOGETHER_AI_API_KEY_HERE"  # Replace with your actual key
+    
+    if API_KEY == "YOUR_TOGETHER_AI_API_KEY_HERE":
+        print("⚠️  Please set your Together.ai API key!")
+        print("   Get it from: https://api.together.xyz/settings/api-keys")
+        return
+    
+    # Initialize the analyzer
+    try:
+        analyzer = TogetherAIAgenticAnalyzer(API_KEY)
+        
+        # Test connection
+        if not analyzer.test_connection():
+            print("❌ Failed to connect to Together.ai. Check your API key and internet connection.")
+            return
+        
+        print("\n✅ Connected to Together.ai successfully!")
+        
+        # Analyze transactions
+        test_transactions = ["MTCN123456ABC", "MTCN789012DEF", "MTCN345678GHI"]
+        
+        for i, mtcn in enumerate(test_transactions, 1):
+            print(f"\n📋 Test {i}: Analyzing transaction {mtcn}")
+            print("-" * 40)
+            
+            result = analyzer.analyze_transaction(mtcn)
+            
+            if result["success"]:
+                print(f"\n🎉 Analysis Result for {mtcn}:")
+                if isinstance(result["analysis_result"], di
