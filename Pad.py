@@ -1,13 +1,35 @@
 from langchain.agents import AgentExecutor
-from langchain.schema import AIMessage
+from langchain.schema import AIMessage, BaseMessage
+from typing import Any, Dict, List, Optional
 
 class CustomAgentExecutor(AgentExecutor):
-    def invoke(self, input, **kwargs):
-        # Convert agent_scratchpad to list of BaseMessage if it's a string
-        if "agent_scratchpad" in input and isinstance(input["agent_scratchpad"], str):
+    def _prepare_intermediate_steps(self, intermediate_steps: List[Dict[str, Any]]) -> List[BaseMessage]:
+        """Convert intermediate steps to a list of BaseMessage objects."""
+        messages = []
+        for step in intermediate_steps:
+            action, observation = step
+            # Log the raw step for debugging
+            logger.info(f"Intermediate step - action: {action}, observation: {observation}")
+            # Ensure action and observation are converted to messages
+            if isinstance(action, str):
+                messages.append(AIMessage(content=action))
+            else:
+                messages.append(AIMessage(content=str(action)))
+            if isinstance(observation, str):
+                messages.append(AIMessage(content=observation))
+            else:
+                messages.append(AIMessage(content=str(observation)))
+        return messages
+
+    def invoke(self, input: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        # Ensure agent_scratchpad is a list of BaseMessage if missing or invalid
+        if "agent_scratchpad" not in input or not isinstance(input["agent_scratchpad"], list):
+            logger.warning(f"agent_scratchpad missing or invalid in input: {input.get('agent_scratchpad', 'None')}. Initializing as empty list.")
+            input["agent_scratchpad"] = []
+        elif isinstance(input["agent_scratchpad"], str):
             logger.warning(f"Converting string agent_scratchpad to AIMessage: {input['agent_scratchpad']}")
             input["agent_scratchpad"] = [AIMessage(content=input["agent_scratchpad"])]
-        logger.info(f"Agent scratchpad input: {input.get('agent_scratchpad', 'None')}")
+        logger.info(f"Agent invoke input: {input}")
         return super().invoke(input, **kwargs)
 
 def _create_agent(self) -> CustomAgentExecutor:
