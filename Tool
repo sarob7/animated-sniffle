@@ -1,0 +1,44 @@
+def _create_agent_alternative(self) -> AgentExecutor:
+        from langchain.agents import create_react_agent
+        from langchain.agents.format_scratchpad import format_log_to_str
+        from langchain.agents.output_parsers import ReActSingleInputOutputParser
+        
+        # Custom prompt that handles string scratchpad
+        system_prompt = """You are a transaction risk analysis expert. Your goal is to analyze transactions for potential money laundering, fraud, or other risks.
+
+You have access to the following tools:
+
+{tools}
+
+Use the following format:
+
+Question: the input question you must answer
+Thought: you should always think about what to do
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: the final answer to the original input question
+
+Begin!
+
+Question: {input}
+Thought: {agent_scratchpad}"""
+
+        prompt = ChatPromptTemplate.from_template(system_prompt)
+        
+        # Create the agent
+        agent = create_react_agent(
+            llm=self.llm,
+            tools=self.tools,
+            prompt=prompt,
+        )
+        
+        return AgentExecutor(
+            agent=agent,
+            tools=self.tools,
+            verbose=True,
+            handle_parsing_errors=True,
+            max_iterations=15,
+        )
