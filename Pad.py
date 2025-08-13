@@ -1,36 +1,21 @@
 from langchain.agents import AgentExecutor
 from langchain.schema import AIMessage, BaseMessage
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Tuple
 
 class CustomAgentExecutor(AgentExecutor):
-    def _prepare_intermediate_steps(self, intermediate_steps: List[Dict[str, Any]]) -> List[BaseMessage]:
+    def _prepare_intermediate_steps(self, intermediate_steps: List[Tuple[Any, Any]]) -> List[BaseMessage]:
         """Convert intermediate steps to a list of BaseMessage objects."""
         messages = []
-        for step in intermediate_steps:
-            action, observation = step
-            # Log the raw step for debugging
+        for action, observation in intermediate_steps:
+            # Log raw step for debugging
             logger.info(f"Intermediate step - action: {action}, observation: {observation}")
-            # Ensure action and observation are converted to messages
-            if isinstance(action, str):
-                messages.append(AIMessage(content=action))
-            else:
-                messages.append(AIMessage(content=str(action)))
-            if isinstance(observation, str):
-                messages.append(AIMessage(content=observation))
-            else:
-                messages.append(AIMessage(content=str(observation)))
+            # Convert action and observation to AIMessage
+            action_content = str(action) if not isinstance(action, str) else action
+            observation_content = str(observation) if not isinstance(observation, str) else observation
+            messages.append(AIMessage(content=f"Action: {action_content}"))
+            messages.append(AIMessage(content=f"Observation: {observation_content}"))
+        logger.info(f"Prepared agent_scratchpad: {messages}")
         return messages
-
-    def invoke(self, input: Dict[str, Any], **kwargs) -> Dict[str, Any]:
-        # Ensure agent_scratchpad is a list of BaseMessage if missing or invalid
-        if "agent_scratchpad" not in input or not isinstance(input["agent_scratchpad"], list):
-            logger.warning(f"agent_scratchpad missing or invalid in input: {input.get('agent_scratchpad', 'None')}. Initializing as empty list.")
-            input["agent_scratchpad"] = []
-        elif isinstance(input["agent_scratchpad"], str):
-            logger.warning(f"Converting string agent_scratchpad to AIMessage: {input['agent_scratchpad']}")
-            input["agent_scratchpad"] = [AIMessage(content=input["agent_scratchpad"])]
-        logger.info(f"Agent invoke input: {input}")
-        return super().invoke(input, **kwargs)
 
 def _create_agent(self) -> CustomAgentExecutor:
     """Create a ReAct agent with a custom prompt."""
