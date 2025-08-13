@@ -1,4 +1,91 @@
-import json
+def _create_simple_agent(self) -> AgentExecutor:
+        """Create a simple agent that bypasses scratchpad issues."""
+        from langchain.schema import AgentAction, AgentFinish
+        from langchain.agents import Tool
+        
+        # Convert StructuredTools to simple Tools
+        simple_tools = []
+        for tool in self.tools:
+            simple_tools.append(
+                Tool(
+                    name=tool.name,
+                    description=tool.description,
+                    func=lambda x, t=tool: t.run(x)
+                )
+            )
+        
+        # Create a custom agent class
+        class SimpleTransactionAgent:
+            def __init__(self, llm, tools):
+                self.llm = llm
+                self.tools = {tool.name: tool for tool in tools}
+                
+            def plan(self, input_text: str, intermediate_steps: list) -> AgentAction or AgentFinish:
+                # Simple planning logic
+                if not intermediate_steps:
+                    return AgentAction(
+                        tool="fetch_customer_data",
+                        tool_input={"mtcn": input_text.split()[-1]},  # Extract MTCN from input
+                        log="Starting with customer data fetch"
+                    )
+                else:
+                    return AgentFinish(
+                        return_values={"output": "Analysis complete"},
+                        log="Finished analysis"
+                    )
+        
+        agent = SimpleTransactionAgent(self.llm, simple_tools)
+        
+        return AgentExecutor(
+            agent=agent,
+            tools=simple_tools,
+            verbose=True,
+            max_iterations=5
+        )    def _create_agent_alternative(self) -> AgentExecutor:
+        """Alternative agent creation method with manual scratchpad handling."""
+        from langchain.agents import create_react_agent
+        from langchain.agents.format_scratchpad import format_log_to_str
+        from langchain.agents.output_parsers import ReActSingleInputOutputParser
+        
+        # Custom prompt that handles string scratchpad
+        system_prompt = """You are a transaction risk analysis expert. Your goal is to analyze transactions for potential money laundering, fraud, or other risks.
+
+You have access to the following tools:
+
+{tools}
+
+Use the following format:
+
+Question: the input question you must answer
+Thought: you should always think about what to do
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: the final answer to the original input question
+
+Begin!
+
+Question: {input}
+Thought: {agent_scratchpad}"""
+
+        prompt = ChatPromptTemplate.from_template(system_prompt)
+        
+        # Create the agent
+        agent = create_react_agent(
+            llm=self.llm,
+            tools=self.tools,
+            prompt=prompt,
+        )
+        
+        return AgentExecutor(
+            agent=agent,
+            tools=self.tools,
+            verbose=True,
+            handle_parsing_errors=True,
+            max_iterations=15,
+        )import json
 import logging
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
@@ -11,10 +98,9 @@ from langchain.chat_models import ChatOpenAI
 from langchain.schema import HumanMessage, AIMessage
 from langchain_core.tools import StructuredTool, ToolException
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.agents import create_react_agent
-from langchain.agents.format_scratchpad import format_to_openai_function_messages
-from langchain.agents.output_parsers import ReActSingleInputOutputParser
+from langchain.agents import create_openai_functions_agent
 from langchain.agents.format_scratchpad.openai_tools import format_to_openai_tool_messages
+from langchain.agents.output_parsers.openai_tools import OpenAIToolsAgentOutputParser
 import asyncio
 
 # Configure logging
@@ -132,38 +218,28 @@ class AgenticTransactionAnalyzer:
         # Initialize tools
         self.tools = self._initialize_tools()
         
-        # Initialize agent
-        self.agent = self._create_agent()
+        # Initialize agent - try OpenAI Functions first, fall back to ReAct if needed
+        try:
+            self.agent = self._create_agent()
+        except Exception as e:
+            logger.warning(f"OpenAI Functions agent failed: {e}. Trying alternative ReAct agent.")
+            self.agent = self._create_agent_alternative()
 
     def _create_agent(self) -> AgentExecutor:
-        """Create a ReAct agent with a custom prompt and proper scratchpad handling."""
+        """Create an OpenAI Functions agent with proper message handling."""
         
-        # Define the system message and prompt template
+        # Define the system message
         system_prompt = """You are a transaction risk analysis expert. Your goal is to analyze transactions for potential money laundering, fraud, or other risks, and determine if they should be APPROVED, FLAGGED, or REJECTED.
 
-You have access to the following tools:
+You have access to various tools to gather information about transactions, verify identities, check sanctions, and assess risks.
 
-{tools}
+When using tools:
+- Always provide the required parameters as specified in each tool's description
+- Use the information gathered strategically to build a complete risk profile
+- Consider all factors: amount, frequency, parties involved, purpose, source of funds
+- Make your final recommendation clear and well-reasoned
 
-Use the following format:
-
-Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action (must be valid JSON)
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-When calling tools, always format the input as a JSON dictionary with the required keys as described in each tool's description.
-
-Examples of proper tool inputs:
-- For 'fetch_customer_data': {{"mtcn": "M789"}}
-- For 'analyze_high_band_risk': {{"sender_id": "S123", "amount": 1000.0}}
-- For 'determine_purpose_and_sof': {{"sender_id": "S123", "receiver_id": "R456", "amount": 1000.0, "mtcn": "M789"}}
-
-Begin!"""
+Your analysis should be thorough but efficient. Start with basic transaction data and then gather additional information based on initial findings."""
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
@@ -172,8 +248,8 @@ Begin!"""
             MessagesPlaceholder("agent_scratchpad")
         ])
 
-        # Create the agent with proper formatting
-        agent = create_react_agent(
+        # Create the agent with OpenAI Functions approach
+        agent = create_openai_functions_agent(
             llm=self.llm,
             tools=self.tools,
             prompt=prompt,
