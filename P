@@ -1,0 +1,90 @@
+Here’s a detailed prompt you could give **Claude** to build a knowledge graph from structured files (CSV/XML/JSON). I’ll make it **general but precise**, so Claude knows the task, expected output, and constraints:
+
+---
+
+### Prompt for Claude
+
+You are tasked with building a **Knowledge Graph (KG)** from structured data sources. The input may be in **CSV, XML, or JSON** format. Your job is to parse the data, extract entities, relationships, and attributes, and produce a machine-readable representation of a Knowledge Graph.
+
+#### Instructions:
+
+1. **Input Handling**
+
+   * Accept data in **CSV, XML, or JSON** format.
+   * Automatically detect the file type and parse it correctly.
+   * For CSVs: treat column headers as potential entity/attribute/relationship labels.
+   * For XML/JSON: treat nested keys and objects as entities/relationships.
+
+2. **Entity Extraction**
+
+   * Identify unique objects (e.g., people, organizations, products, locations, events).
+   * Assign a unique identifier (URI-style or UUID).
+   * Extract attributes (e.g., name, age, date, category).
+
+3. **Relationship Extraction**
+
+   * Identify links between entities (e.g., *Person → works\_for → Organization*).
+   * Represent relationships as **directed edges** with labels.
+
+4. **Graph Representation**
+
+   * Output the Knowledge Graph in **RDF triples format (subject, predicate, object)**.
+   * Also provide an **optional Graph Schema/Ontology** (list of entity types, relationship types, and attributes).
+   * Ensure compliance with semantic web standards (RDF/OWL style where possible).
+
+5. **Output Format**
+
+   * Primary: **Turtle (TTL)** or **JSON-LD** serialization of the KG.
+   * Secondary: A human-readable summary showing:
+
+     * List of detected entity classes
+     * Example triples
+     * Relationship counts
+
+6. **Quality Guidelines**
+
+   * Avoid duplication of entities (use normalization and unique identifiers).
+   * Handle missing or malformed values gracefully.
+   * If ambiguities exist, explain assumptions made.
+   * Make the KG extensible (new files can be ingested without breaking schema).
+
+#### Example Workflow
+
+* Input (CSV):
+
+  ```csv
+  person,company,role
+  Alice,Acme Corp,Engineer
+  Bob,Acme Corp,Manager
+  ```
+
+* Extracted Triples:
+
+  ```
+  :Alice :works_for :Acme_Corp .
+  :Alice :has_role "Engineer" .
+  :Bob :works_for :Acme_Corp .
+  :Bob :has_role "Manager" .
+  ```
+
+* Output (Turtle):
+
+  ```turtle
+  @prefix : <http://example.org/> .
+
+  :Alice a :Person ;
+         :works_for :Acme_Corp ;
+         :has_role "Engineer" .
+
+  :Bob a :Person ;
+       :works_for :Acme_Corp ;
+       :has_role "Manager" .
+
+  :Acme_Corp a :Organization .
+  ```
+
+---
+
+👉 You can paste this entire prompt into Claude, then provide your CSV/XML/JSON file contents.
+
+Would you like me to **optimize this prompt for coding** (so Claude directly writes Python code with libraries like `rdflib`/`networkx`) or for a **no-code structured text output** (so Claude just gives you RDF triples and summaries)?
